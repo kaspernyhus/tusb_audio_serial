@@ -14,6 +14,7 @@
 #include "sdkconfig.h"
 #include "tinyusb.h"
 #include "tusb_audio.h"
+#include "tusb_cdc_acm.h"
 #include "sig_gen.h"
 
 #define SAMPLES_BYTES_NUM CFG_TUD_AUDIO_EP_SZ_IN
@@ -21,6 +22,7 @@
 
 static const char *TAG = "USB audio example";
 
+static uint8_t cdc_buf[CONFIG_ESP_TINYUSB_CDC_RX_BUFSIZE + 1];
 uint16_t audio_buffer[SAMPLES_BYTES_NUM];
 sig_gen_t sine_ch1;
 sig_gen_t sine_ch2;
@@ -68,16 +70,16 @@ void tinyusb_cdc_rx_callback(int itf, cdcacm_event_t *event)
     size_t rx_size = 0;
 
     /* read */
-    esp_err_t ret = tinyusb_cdcacm_read(itf, buf, CONFIG_TINYUSB_CDC_RX_BUFSIZE, &rx_size);
+    esp_err_t ret = tinyusb_cdcacm_read(itf, cdc_buf, CONFIG_ESP_TINYUSB_CDC_RX_BUFSIZE, &rx_size);
     if (ret == ESP_OK) {
-        buf[rx_size] = '\0';
-        ESP_LOGI(TAG, "Got data (%d bytes): %s", rx_size, buf);
+        cdc_buf[rx_size] = '\0';
+        ESP_LOGI(TAG, "Got data (%d bytes): %s", rx_size, cdc_buf);
     } else {
         ESP_LOGE(TAG, "Read error");
     }
 
     /* write back */
-    tinyusb_cdcacm_write_queue(itf, buf, rx_size);
+    tinyusb_cdcacm_write_queue(itf, cdc_buf, rx_size);
     tinyusb_cdcacm_write_flush(itf, 0);
 }
 
@@ -117,16 +119,18 @@ void app_main(void)
         .rx_unread_buf_sz = 64,
         .callback_rx = &tinyusb_cdc_rx_callback, // the first way to register a callback
         .callback_rx_wanted_char = NULL,
-        .callback_line_state_changed = NULL,
+        .callback_line_state_changed = &tinyusb_cdc_line_state_changed_callback,
         .callback_line_coding_changed = NULL
     };
-
     ESP_ERROR_CHECK(tusb_cdc_acm_init(&acm_cfg));
-    /* the second way to register a callback */
-    ESP_ERROR_CHECK(tinyusb_cdcacm_register_callback(
-                        TINYUSB_CDC_ACM_0,
-                        CDC_EVENT_LINE_STATE_CHANGED,
-                        &tinyusb_cdc_line_state_changed_callback));
-    ESP_LOGI(TAG, "USB initialization DONE");
-}
 
+    ESP_LOGI(TAG, "USB initialization DONE");
+
+    while(1)
+    {
+        uint8_t msg_buf[] = "Hello from ESP32 via USB CDC\r\n";
+        tinyusb_cdcacm_write_queue(0, msg_buf, sizeof(msg_buf));
+        tinyusb_cdcacm_write_flush(0, 0);
+        vTaskDelay(pdMS_TO_TICKS(4000));
+    }
+}
